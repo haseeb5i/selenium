@@ -28,6 +28,3 @@ for i in range(2, len(rows) + 1):
             By.XPATH, f'//table/tbody/tr[{i}]/td[{j}]').text
         print(value, end='   ')
     print()
-
-
-#### Scrolling ####

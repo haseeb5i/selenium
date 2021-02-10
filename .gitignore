@@ -133,3 +133,4 @@ dmypy.json
 chrome-win/
 drivers/
 temp/
+data_crawler.py
