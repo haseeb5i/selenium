@@ -14,7 +14,7 @@ from selenium.common import exceptions
 from html_table_parser import HTMLTableParser
 
 
-def login(driver, user_name="yixun1", passwd="a121212"):
+def login(driver, user_name="", passwd=""):
     TRY_AGAIN = True
     try_counter = 0
     tries_allowed = 2
