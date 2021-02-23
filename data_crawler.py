@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import time
+import logging
 import csv
 import sys
 
@@ -14,7 +15,24 @@ from selenium.common import exceptions
 from html_table_parser import HTMLTableParser
 
 
-def login(driver, user_name="", passwd=""):
+def init_logger():
+    # create a logger, create handler with configs, add to logger
+    logger = logging.getLogger(__name__)
+    logger.setLevel(logging.DEBUG)
+
+    formatter = logging.Formatter(
+        '%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+
+    # creating some handlers
+    log_file = "data_crawler.log"
+    fh = logging.FileHandler(filename=log_file)
+    fh.setLevel(logging.DEBUG)
+    fh.setFormatter(formatter)
+    logger.addHandler(fh)
+    return logger
+
+
+def login(driver, user_name="yixun1", passwd="a212121"):
     TRY_AGAIN = True
     try_counter = 0
     tries_allowed = 2
@@ -60,7 +78,7 @@ def login(driver, user_name="", passwd=""):
                 sys.exit(1)
 
 
-def make_filtered_search(driver, srch_term="", start_date="2021-01-01", end_date="2021-01-01", origin="china"):
+def make_filtered_search(driver, srch_term="", start_date="2018-01-01", end_date="2018-02-01", origin="", dest="", hs_code=""):
     wait = WebDriverWait(driver, 15)
     cal_start_date_xpath = "//*[@id='DATE']/span/input[1]"
 
@@ -98,6 +116,14 @@ def make_filtered_search(driver, srch_term="", start_date="2021-01-01", end_date
     driver.find_element_by_id("ORIGIN_COUNTRY_TC").send_keys(origin)
     time.sleep(1)
 
+    # select dest country
+    driver.find_element_by_id("DEST_COUNTRY_TC").send_keys(dest)
+    time.sleep(1)
+
+    # input hs code
+    driver.find_element_by_id("HS_CODE").send_keys(hs_code)
+    time.sleep(1)
+
     # submit the filter/srch query
     driver.find_element_by_css_selector("button[type='submit']").click()
     time.sleep(1)
@@ -118,6 +144,20 @@ def increase_product_count(driver):
         EC.presence_of_element_located((By.CSS_SELECTOR, "[title='40 条/页']")))
 
 
+def fetch_a_page(driver, page_number=1):
+    elem_jumper = driver.find_element_by_css_selector(
+        ".ant-pagination-options-quick-jumper input")
+    ac = ActionChains(driver)
+    ac.move_to_element(elem_jumper).click()
+    ac.send_keys(str(page_number) + Keys.ENTER)
+    ac.perform()
+    # wait for the new page to load and then release
+    wait = WebDriverWait(driver, 20)
+    active_page_btn_selector = f"ul > li.ant-pagination-item-active[title='{page_number}']"
+    wait.until(EC.presence_of_element_located(
+        (By.CSS_SELECTOR, active_page_btn_selector)))
+
+
 def parse_data(driver):
     html = driver.find_element_by_tag_name(
         "html").get_attribute("innerHTML")
@@ -129,48 +169,128 @@ def parse_data(driver):
         csv_writer.writerows(p.tables[0])
 
 
-def main():
-    # get the chromedriver with proper options
+def init_webdriver(exec_path="", headless_mode=False):
     op = webdriver.ChromeOptions()
-    # uncomment this to run in headless mode (without any dislplay)
-    # op.add_argument("--headless")
+    if headless_mode:
+        op.add_argument("--headless")
+        op.add_argument("--no-sandbox")
     prefs = {"profile.managed_default_content_settings.images": 2}
     op.add_experimental_option("prefs", prefs)
-    driver = webdriver.Chrome("drivers\\chromedriver.exe", options=op)
+    if exec_path == "":
+        driver = webdriver.Chrome(options=op)
+    else:
+        driver = webdriver.Chrome(exec_path, options=op)
 
+    return driver
+
+
+def get_arguments():
+    import argparse
+
+    args = argparse.ArgumentParser(
+        description="Simple selenium script for gathering trade data")
+    args.add_argument("--start_date", "-sd", default="2018-01-01",
+                      help="Specify the start date for the filter in format yyyy-mm-dd")
+    args.add_argument("--end_date", "-ed", default="2018-02-01",
+                      help="Specify the end date for the filter in format yyyy-mm-dd")
+    args.add_argument("--keywords", "-k", default="",
+                      help="Specify any keywords, note use double quotes if more than one e.g., \"bolt steel\"")
+    args.add_argument("--origin_country", "-c", default="",
+                      help="Specify the origin country for the filter")
+    args.add_argument("--dest_country", "-d", default="",
+                      help="Specify the destination country for the filter")
+    args.add_argument("--hs_code", "-hs", default="",
+                      help="Specify the HS code of the product for the filter")
+    args.add_argument("--start_page", "-sp", default=1, type=int,
+                      help="Specify the start page for scraping")
+    args.add_argument("--end_page", "-ep", default=5, type=int,
+                      help="Specify the end page for scraping")
+    arguments = args.parse_args()
+
+    assert arguments.start_page <= arguments.end_page, "Start page must be smaller than end page"
+
+    return arguments
+
+
+def main():
+
+    # driver = init_webdriver("drivers\\chromedriver.exe")
+    driver = init_webdriver(headless_mode=True)
+    logger = init_logger()
     # parameters to set
-    # NOTE: provide start and end data in this format, yyyy-mm-dd
-    keywords = "steel"
-    s_date = "2018-01-01"
-    e_date = "2018-01-01"
-    origin_count = "china"
-
-    login(driver)
-    make_filtered_search(driver, srch_term=keywords, start_date=s_date,
-                         end_date=e_date, origin=origin_count)
+    args = get_arguments()
+    keywords = args.keywords
+    s_date = args.start_date
+    e_date = args.end_date
+    origin_count = args.origin_country
+    dest_count = args.dest_country
+    hs_code = args.hs_code
 
     # wait for javascript loadings, time can be changed
     wait = WebDriverWait(driver, 20)
 
+    login(driver)
+    logger.debug("Login is succesful!")
+    # filter the search results
+    make_filtered_search(driver, srch_term=keywords, start_date=s_date,
+                         end_date=e_date, origin=origin_count, dest=dest_count, hs_code=hs_code)
+    wait.until(EC.invisibility_of_element_located(
+        (By.CSS_SELECTOR, ".ant-spin-blur")))
     # first page appears after the search btn submit, so wait for it
     wait.until(EC.presence_of_element_located(
         (By.CSS_SELECTOR, "ul > li.ant-pagination-item-active[title='1']")))
+    # increase product count from 20 to 40
     increase_product_count(driver)
 
-    PAGES = 5
-    for i in range(1, PAGES + 1):
-        # moving to a specific page nubmer and waiting for it to load
-        driver.find_element_by_link_text(f"{i}").click()
-        active_page_btn_selector = f"ul > li.ant-pagination-item-active[title='{i}']"
-        wait.until(EC.presence_of_element_located(
-            (By.CSS_SELECTOR, active_page_btn_selector)))
-        # getting data from current page
-        parse_data(driver)
-        print(f"page {i}/{PAGES} is done, moving to next")
+    S_PAGE = args.start_page
+    E_PAGE = args.end_page
+    counter = S_PAGE
+    TRY_LIMIT = 5
+    try_counter = 0
+
+    logger.debug(
+        f"params:  -sd {s_date} -ed {e_date} -sp {S_PAGE} -ep {E_PAGE} -c {origin_count} -k {keywords} -d {dest_count} -hs {hs_code}")
+
+    while counter <= E_PAGE:
+        try:
+            fetch_a_page(driver, counter)
+            # getting data rom current page
+            parse_data(driver)
+            print(f"page {counter}/{E_PAGE} is done, moving to next")
+            logger.debug(f"page {counter}/{E_PAGE} is done, moving to next")
+            counter += 1
+            # resets the try couter after every successful run
+            try_counter = 0
+        except exceptions.TimeoutException:
+            if try_counter < TRY_LIMIT:
+                logger.warning(
+                    f"Timeout exception caught, resetting the page and retrying at page {counter}")
+                # slow down and resets the whole setup
+                time.sleep(5)
+                driver.get("http://dt.data1688.com/overseas/global")
+                wait.until(EC.invisibility_of_element_located(
+                    (By.CSS_SELECTOR, ".ant-spin-blur")))
+                make_filtered_search(driver, srch_term=keywords, start_date=s_date,
+                                     end_date=e_date, origin=origin_count, dest=dest_count, hs_code=hs_code)
+                # first page appears after the search btn submit, so wait for it
+                wait.until(EC.presence_of_element_located(
+                    (By.CSS_SELECTOR, "ul > li.ant-pagination-item-active[title='1']")))
+                # increase product count from 20 to 40
+                increase_product_count(driver)
+                try_counter += 1
+            else:
+                logger.error(
+                    "Max retries reached (reloaded page 5 times), no response from website, exiting")
+                break
+        except Exception as _:
+            logger.error("Someother exception ocurred", exc_info=True)
+            break
 
     print("crawled all pages, now quitting")
+    logger.debug("crawled all pages, now quitting")
     driver.quit()
 
 
 if __name__ == "__main__":
+    # python data_crawler.py -sp 3 -ep 5 -sd 2020-03-02 -ed 2021-01-01 -c china -k "bolt"
     main()
